@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.DS_Store
+.venv/
+.vscode/
+data/
+data_out/
+models_out/
+plots/
+*.h5
+*.npy
+*.npz
+*.zip

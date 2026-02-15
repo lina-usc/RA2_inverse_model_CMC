@@ -1,0 +1,83 @@
+
+
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -U pip
+python -m pip install -r requirements.txt
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+
+
+
+python -m eval.qc_forward --n 50 --seed 0 --out plots/qc_forward
+
+
+Generate CMC dataset (warmup + regime rejection)
+
+
+# generate_dataset
+
+python -m data.generate_dataset --n 10000 --seed 0 --out data/synthetic_cmc_dataset.h5 --overwrite
+
+Run Phase‑3 
+Step 1 — Extract features from your H5
+python -m data.prepare_training_data --in data/synthetic_cmc_dataset.h5 --out-dir data_out --overwrite
+
+Step 2 — Create fixed splits (reused for ERP/TFR/hybrid)
+python -m data.make_splits --data-out data_out --seed 42 --overwrite
+
+Step 3 — Visualize what the model sees (plots)
+python -m eval.qc_tokens --data-out data_out --out plots/qc_tokens --n 64
+
+Phase‑4 Commands 
+0) Make sure models_out/ exists
+mkdir -p models_out
+
+1) Train HYBRID (main condition) — 3‑seed ensemble
+python -m models.train --run-name cmc --features hybrid --train-seed 0 --split-seed 42 --posterior fullcov
+python -m models.train --run-name cmc --features hybrid --train-seed 1 --split-seed 42 --posterior fullcov
+python -m models.train --run-name cmc --features hybrid --train-seed 2 --split-seed 42 --posterior fullcov
+
+2) Train ERP‑only — 3 seeds
+python -m models.train --run-name cmc --features erp --train-seed 0 --split-seed 42 --posterior fullcov
+python -m models.train --run-name cmc --features erp --train-seed 1 --split-seed 42 --posterior fullcov
+python -m models.train --run-name cmc --features erp --train-seed 2 --split-seed 42 --posterior fullcov
+
+3) Train TFR‑only — 3 seeds
+python -m models.train --run-name cmc --features tfr --train-seed 0 --split-seed 42 --posterior fullcov
+python -m models.train --run-name cmc --features tfr --train-seed 1 --split-seed 42 --posterior fullcov
+python -m models.train --run-name cmc --features tfr --train-seed 2 --split-seed 42 --posterior fullcov
+
+
+4) Run evaluation RIGHT NOW on your trained hybrid seed0
+python -m eval.evaluate_ensemble \
+  --model-dirs models_out/cmc_hybrid_seed0 \
+  --features hybrid \
+  --split test \
+  --out-dir plots/eval_hybrid_seed0 \
+  --n-post-samples 200 \
+  --seed 0
+
+# next 
+
+python -m eval.evaluate_ensemble \
+  --model-dirs models_out/cmc_erp_bilstm_seed0 models_out/cmc_erp_bilstm_seed1 models_out/cmc_erp_bilstm_seed2 \
+  --features erp \
+  --split test \
+  --out-dir plots/eval_erp_bilstm_ens \
+  --n-post-samples 200 \
+  --seed 0
+
+
+python -m eval.evaluate_ensemble \
+  --model-dirs models_out/cmc_hybrid_seed0 \
+  --features hybrid \
+  --split test \
+  --out-dir plots/eval_hybrid_seed0 \
+  --n-post-samples 200 \
+  --seed 0
+
+
+Produce professor bundle zip
+
+python -m eval.make_prof_bundle --run-name cmc_fullcov_v1 --split-seed 42 --out 
