@@ -1,55 +1,90 @@
-
+# Environment setup (main pipeline)
+Create and install the main environment used for:
+QC, dataset generation, feature extraction, training, evaluation.
 
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install -U pip
 python -m pip install -r requirements.txt
+
+# Forward-model sanity check (QC)
+This produces the forward‑model QC figures under plots/qc_forward/.
+
 source .venv/bin/activate
-python -m pip install -r requirements.txt
-
-
-
 python -m eval.qc_forward --n 50 --seed 0 --out plots/qc_forward
 
 
-Generate CMC dataset (warmup + regime rejection)
+# Generate synthetic CMC dataset (warmup + regime rejection)
+This creates the H5 dataset used by everything downstream.
 
-
-# generate_dataset
-
+source .venv/bin/activate
 python -m data.generate_dataset --n 10000 --seed 0 --out data/synthetic_cmc_dataset.h5 --overwrite
 
-Run Phase‑3 
-Step 1 — Extract features from your H5
+
+# Extract token features + fixed splits + token QC
+
+Writes to data_out/.
+source .venv/bin/activate
 python -m data.prepare_training_data --in data/synthetic_cmc_dataset.h5 --out-dir data_out --overwrite
 
-Step 2 — Create fixed splits (reused for ERP/TFR/hybrid)
+Expected outputs:
+data_out/features.npy
+data_out/features_erp.npy
+data_out/features_tfr.npy
+data_out/params.npy
+data_out/splits.npz (after next step)
+metadata .npz + logs .json
+
+# Create fixed splits
 python -m data.make_splits --data-out data_out --seed 42 --overwrite
 
-Step 3 — Visualize what the model sees (plots)
+# Visualize tokenization
 python -m eval.qc_tokens --data-out data_out --out plots/qc_tokens --n 64
 
-Phase‑4 Commands 
-0) Make sure models_out/ exists
+# Train inverse models (Transformer + BiLSTM)
 mkdir -p models_out
 
-1) Train HYBRID (main condition) — 3‑seed ensemble
+# Transformer (ParamToken) — main models
+Hybrid (main condition), 3‑seed ensemble:
+
 python -m models.train --run-name cmc --features hybrid --train-seed 0 --split-seed 42 --posterior fullcov
 python -m models.train --run-name cmc --features hybrid --train-seed 1 --split-seed 42 --posterior fullcov
-python -m models.train --run-name cmc --features hybrid --train-seed 2 --split-seed 42 --posterior fullcov
+python -m models.train --run-name cmc --features hybrid --train-seed 2 --sp
 
-2) Train ERP‑only — 3 seeds
+# ERP‑only, 3 seeds:
+source .venv/bin/activate
 python -m models.train --run-name cmc --features erp --train-seed 0 --split-seed 42 --posterior fullcov
 python -m models.train --run-name cmc --features erp --train-seed 1 --split-seed 42 --posterior fullcov
 python -m models.train --run-name cmc --features erp --train-seed 2 --split-seed 42 --posterior fullcov
 
-3) Train TFR‑only — 3 seeds
+# TFR‑only, 3 seeds:
+source .venv/bin/activate
 python -m models.train --run-name cmc --features tfr --train-seed 0 --split-seed 42 --posterior fullcov
 python -m models.train --run-name cmc --features tfr --train-seed 1 --split-seed 42 --posterior fullcov
 python -m models.train --run-name cmc --features tfr --train-seed 2 --split-seed 42 --posterior fullcov
 
+# BiLSTM baselines (architecture comparison)
+Train BiLSTM versions for the same feature sets and seeds:
+Hybrid BiLSTM:
+python -m models.train --run-name cmc --arch bilstm --features hybrid --train-seed 0 --split-seed 42 --posterior fullcov
+python -m models.train --run-name cmc --arch bilstm --features hybrid --train-seed 1 --split-seed 42 --posterior fullcov
+python -m models.train --run-name cmc --arch bilstm --features hybrid --train-seed 2 --split-seed 42 --posterior fullcov
 
-4) Run evaluation RIGHT NOW on your trained hybrid seed0
+# ERP BiLSTM:
+python -m models.train --run-name cmc --arch bilstm --features erp --train-seed 0 --split-seed 42 --posterior fullcov
+python -m models.train --run-name cmc --arch bilstm --features erp --train-seed 1 --split-seed 42 --posterior fullcov
+python -m models.train --run-name cmc --arch bilstm --features erp --train-seed 2 --split-seed 42 --posterior fullcov
+
+# TFR BiLSTM:
+
+python -m models.train --run-name cmc --arch bilstm --features tfr --train-seed 0 --split-seed 42 --posterior fullcov
+python -m models.train --run-name cmc --arch bilstm --features tfr --train-seed 1 --split-seed 42 --posterior fullcov
+python -m models.train --run-name cmc --arch bilstm --features tfr --train-seed 2 --split-seed 42 --posterior fullcov
+
+
+# Evaluation (calibration + diagnostics + summary metrics)
+Evaluate a single trained model (example: hybrid seed0)
+source .venv/bin/activate
 python -m eval.evaluate_ensemble \
   --model-dirs models_out/cmc_hybrid_seed0 \
   --features hybrid \
@@ -57,9 +92,56 @@ python -m eval.evaluate_ensemble \
   --out-dir plots/eval_hybrid_seed0 \
   --n-post-samples 200 \
   --seed 0
+deactivate
 
-# next 
+# Evaluate ensembles (Transformer)
+Hybrid ensemble:
+source .venv/bin/activate
+python -m eval.evaluate_ensemble \
+  --model-dirs models_out/cmc_hybrid_seed0 models_out/cmc_hybrid_seed1 models_out/cmc_hybrid_seed2 \
+  --features hybrid \
+  --split test \
+  --out-dir plots/eval_hybrid_ens \
+  --n-post-samples 200 \
+  --seed 0
+deactivate
 
+# ERP ensemble:
+source .venv/bin/activate
+python -m eval.evaluate_ensemble \
+  --model-dirs models_out/cmc_erp_seed0 models_out/cmc_erp_seed1 models_out/cmc_erp_seed2 \
+  --features erp \
+  --split test \
+  --out-dir plots/eval_erp_ens \
+  --n-post-samples 200 \
+  --seed 0
+deactivate
+
+# TFR ensemble:
+source .venv/bin/activate
+python -m eval.evaluate_ensemble \
+  --model-dirs models_out/cmc_tfr_seed0 models_out/cmc_tfr_seed1 models_out/cmc_tfr_seed2 \
+  --features tfr \
+  --split test \
+  --out-dir plots/eval_tfr_ens \
+  --n-post-samples 200 \
+  --seed 0
+deactivate
+
+# Evaluate ensembles (BiLSTM)
+Hybrid BiLSTM ensemble:
+source .venv/bin/activate
+python -m eval.evaluate_ensemble \
+  --model-dirs models_out/cmc_hybrid_bilstm_seed0 models_out/cmc_hybrid_bilstm_seed1 models_out/cmc_hybrid_bilstm_seed2 \
+  --features hybrid \
+  --split test \
+  --out-dir plots/eval_hybrid_bilstm_ens \
+  --n-post-samples 200 \
+  --seed 0
+deactivate
+
+# ERP BiLSTM ensemble:
+source .venv/bin/activate
 python -m eval.evaluate_ensemble \
   --model-dirs models_out/cmc_erp_bilstm_seed0 models_out/cmc_erp_bilstm_seed1 models_out/cmc_erp_bilstm_seed2 \
   --features erp \
@@ -67,17 +149,130 @@ python -m eval.evaluate_ensemble \
   --out-dir plots/eval_erp_bilstm_ens \
   --n-post-samples 200 \
   --seed 0
+deactivate
 
-
+# TFR BiLSTM ensemble:
+source .venv/bin/activate
 python -m eval.evaluate_ensemble \
-  --model-dirs models_out/cmc_hybrid_seed0 \
-  --features hybrid \
+  --model-dirs models_out/cmc_tfr_bilstm_seed0 models_out/cmc_tfr_bilstm_seed1 models_out/cmc_tfr_bilstm_seed2 \
+  --features tfr \
   --split test \
-  --out-dir plots/eval_hybrid_seed0 \
+  --out-dir plots/eval_tfr_bilstm_ens \
   --n-post-samples 200 \
   --seed 0
+deactivate
+
+# Ablation A — Diagonal posterior head (ensemble vs single seed)
+Train diagonal‑head hybrid models (run name cmc_diag, posterior diag):
+source .venv/bin/activate
+python -m models.train --run-name cmc_diag --features hybrid --train-seed 0 --split-seed 42 --posterior diag
+python -m models.train --run-name cmc_diag --features hybrid --train-seed 1 --split-seed 42 --posterior diag
+python -m models.train --run-name cmc_diag --features hybrid --train-seed 2 --split-seed 42 --posterior diag
+deactivate
 
 
-Produce professor bundle zip
+# Evaluate diagonal ensemble:
+source .venv/bin/activate
+python -m eval.evaluate_ensemble \
+  --model-dirs models_out/cmc_diag_hybrid_seed0 models_out/cmc_diag_hybrid_seed1 models_out/cmc_diag_hybrid_seed2 \
+  --features hybrid \
+  --split test \
+  --out-dir plots/eval_hybrid_diag_ens \
+  --n-post-samples 200 \
+  --seed 0
+deactivate
 
-python -m eval.make_prof_bundle --run-name cmc_fullcov_v1 --split-seed 42 --out 
+# Evaluate diagonal single seed:
+source .venv/bin/activate
+python -m eval.evaluate_ensemble \
+  --model-dirs models_out/cmc_diag_hybrid_seed0 \
+  --features hybrid \
+  --split test \
+  --out-dir plots/eval_hybrid_diag_single_seed0 \
+  --n-post-samples 200 \
+  --seed 0
+deactivate
+
+# Ablation B — Transformer WITHOUT parameter tokens (noparamtoken)
+This repo includes models/transformer_noparamtoken.py and models.train supports:
+--arch noparamtoken
+
+# Train noparamtoken hybrid ensemble:
+source .venv/bin/activate
+python -m models.train --run-name cmc --arch noparamtoken --features hybrid --train-seed 0 --split-seed 42 --posterior fullcov
+python -m models.train --run-name cmc --arch noparamtoken --features hybrid --train-seed 1 --split-seed 42 --posterior fullcov
+python -m models.train --run-name cmc --arch noparamtoken --features hybrid --train-seed 2 --split-seed 42 --posterior fullcov
+deactivate
+
+# Evaluate noparamtoken ensemble:
+source .venv/bin/activate
+python -m eval.evaluate_ensemble \
+  --model-dirs models_out/cmc_hybrid_noparamtoken_seed0 models_out/cmc_hybrid_noparamtoken_seed1 models_out/cmc_hybrid_noparamtoken_seed2 \
+  --features hybrid \
+  --split test \
+  --out-dir plots/eval_hybrid_noparamtoken_ens \
+  --n-post-samples 200 \
+  --seed 0
+deactivate
+
+# Evaluate noparamtoken single seed:
+source .venv/bin/activate
+python -m eval.evaluate_ensemble \
+  --model-dirs models_out/cmc_hybrid_noparamtoken_seed0 \
+  --features hybrid \
+  --split test \
+  --out-dir plots/eval_hybrid_noparamtoken_single_seed0 \
+  --n-post-samples 200 \
+  --seed 0
+deactivate
+
+# SBI baseline (SNPE) + mismatch robustness
+The SBI baseline is run in a separate environment to avoid dependency conflicts.
+
+# Create/install the SBI environment:
+python -m venv .venv_sbi
+source .venv_sbi/bin/activate
+python -m pip install -U pip
+python -m pip install -r requirements.txt
+python -m pip install sbi
+deactivate
+
+# Run SNPE baseline + robustness sweep:
+source .venv_sbi/bin/activate
+python scripts/neurips_upgrades.py all \
+  --h5 data/synthetic_cmc_dataset.h5 \
+  --data-out data_out \
+  --split-seed 42 \
+  --outdir results/neurips_sbi \
+  --device cpu \
+  --n-post-samples 200
+deactivate
+
+# STFT patch‑resolution ablation (hybrid only):
+source .venv_sbi/bin/activate
+python scripts/neurips_upgrades.py all \
+  --h5 data/synthetic_cmc_dataset.h5 \
+  --data-out data_out \
+  --split-seed 42 \
+  --outdir results/neurips_sbi \
+  --device cpu \
+  --n-post-samples 200 \
+  --do-patch-ablation
+deactivate
+
+# PPC for the SBI baseline (SNPE)
+Run the SNPE posterior predictive checks:
+source .venv_sbi/bin/activate
+python scripts/snpe_ppc.py \
+  --h5 data/synthetic_cmc_dataset.h5 \
+  --data-out data_out \
+  --split-seed 42 \
+  --sbi-out results/neurips_sbi \
+  --out plots/snpe_ppc \
+  --n-post-samples 200 \
+  --seed 0
+deactivate
+Expected outputs: (PPC grids + summary files)
+
+# One‑shot full reproduction script
+bash scripts/reproduce_all.sh
