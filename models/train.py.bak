@@ -23,7 +23,6 @@ from data.splits import ensure_splits  # noqa: E402
 from models.param_transforms import theta_to_z  # noqa: E402
 from models.posterior_fullcov import mvn_tril_nll, raw_tril_size  # noqa: E402
 from models.transformer_paramtoken import build_paramtoken_transformer  # noqa: E402
-from models.transformer_noparamtoken import build_noparamtoken_transformer  # noqa: E402
 
 
 def _import_tensorflow_or_die():
@@ -103,7 +102,7 @@ def main() -> None:
 
     ap = argparse.ArgumentParser()
     ap.add_argument("--run-name", type=str, default="cmc")
-    ap.add_argument("--arch", choices=["paramtoken", "noparamtoken", "bilstm"], default="paramtoken")
+    ap.add_argument("--arch", choices=["paramtoken", "bilstm"], default="paramtoken")
     ap.add_argument("--features", choices=["hybrid", "erp", "tfr"], default="hybrid")
     ap.add_argument("--train-seed", type=int, default=0)
     ap.add_argument("--seed", type=int, default=None, help="Alias for --train-seed.")
@@ -261,8 +260,7 @@ def main() -> None:
         return tf.reduce_mean(nll)
 
     # Build model
-    build_fn = build_noparamtoken_transformer if args.arch == "noparamtoken" else build_paramtoken_transformer
-    model = build_fn(
+    model = build_paramtoken_transformer(
         n_tokens=n_tokens,
         feature_dim=feature_dim,
         n_params=P,

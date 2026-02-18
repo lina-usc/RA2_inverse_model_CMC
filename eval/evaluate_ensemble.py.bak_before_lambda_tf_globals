@@ -350,64 +350,7 @@ def main() -> None:
         if not os.path.exists(path):
             raise SystemExit(f"Missing model in {md}: expected paramtoken_best.keras or paramtoken_final.keras")
 
-        # NOPARAMTOKEN_REBUILD_FOR_EVAL: noparamtoken .keras contains Lambda(lambdas) that may deserialize with broken tf globals.
-        # Workaround: load the saved model ONLY to extract weights, rebuild the architecture from model_config.npz, then copy weights.
-        cfg_path = os.path.join(md, "model_config.npz")
-        arch = None
-        cfg = None
-        if os.path.exists(cfg_path):
-            try:
-                cfg = np.load(cfg_path, allow_pickle=False)
-                a = cfg.get("arch", None)
-                if a is not None:
-                    a0 = a.item() if hasattr(a, "item") else a
-                    arch = a0.decode("utf-8") if isinstance(a0, (bytes, np.bytes_)) else str(a0)
-            except Exception:
-                cfg = None
-                arch = None
-
-        if arch == "noparamtoken" and cfg is not None:
-            from models.transformer_noparamtoken import build_noparamtoken_transformer
-            # Load to get weights (do NOT run a forward pass with this loaded model).
-            model_bad = tf.keras.models.load_model(path, custom_objects=custom, compile=False)
-
-            post = cfg["posterior"]
-            post0 = post.item() if hasattr(post, "item") else post
-            posterior = post0.decode("utf-8") if isinstance(post0, (bytes, np.bytes_)) else str(post0)
-
-            model = build_noparamtoken_transformer(
-                n_tokens=int(cfg["n_tokens"]),
-                feature_dim=int(cfg["feature_dim"]),
-                n_params=int(cfg["n_params"]),
-                n_time_patches=int(cfg["n_time_patches"]),
-                n_freq_patches=int(cfg["n_freq_patches"]),
-                n_tokens_erp=int(cfg["n_tokens_erp"]),
-                d_model=int(cfg["d_model"]),
-                num_layers=int(cfg["num_layers"]),
-                num_heads=int(cfg["num_heads"]),
-                ff_dim=int(cfg["ff_dim"]),
-                dropout_rate=float(cfg["dropout_rate"]),
-                posterior=posterior,
-                return_attention=False,
-            )
-            model.set_weights(model_bad.get_weights())
-            del model_bad
-        else:
-            model = tf.keras.models.load_model(path, custom_objects=custom, compile=False)
-        # PATCH_LAMBDA_TF_GLOBALS: Keras Lambda deserialization may turn `tf` into a dict; restore module refs.
-        try:
-            import keras
-            for _ly in model.layers:
-                if _ly.__class__.__name__ == "Lambda":
-                    _fn = getattr(_ly, "function", None)
-                    if _fn is not None and hasattr(_fn, "__globals__"):
-                        _g = _fn.__globals__
-                        if isinstance(_g.get("tf", None), dict):
-                            _g["tf"] = tf
-                        if isinstance(_g.get("np", None), dict):
-                            _g["np"] = np
-        except Exception:
-            pass
+        model = tf.keras.models.load_model(path, custom_objects=custom, compile=False)
         pred = model.predict([Xs, mask], batch_size=args.batch_size, verbose=0)
         pred = np.asarray(pred, dtype=np.float32)
 

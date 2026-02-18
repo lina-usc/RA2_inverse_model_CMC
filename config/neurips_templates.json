@@ -1,0 +1,6 @@
+{
+  "train_template": "python train.py --feature_set {feature_set} --use_param_tokens {use_param_tokens} --cov {cov} --seed {seed} --n_time_patches {n_time_patches} --n_freq_patches {n_freq_patches} --outdir {outdir}",
+  "ckpt_path": "{outdir}/checkpoint_best.pt",
+  "eval_template": "python eval.py --ckpt {ckpt} --outdir {outdir} --n_post_samples {n_post_samples}",
+  "n_post_samples": 2000
+}

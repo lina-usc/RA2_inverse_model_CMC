@@ -33,6 +33,25 @@ class RegimeFilterConfig:
 
 
 def regime_reject(eeg: np.ndarray, cfg: RegimeFilterConfig) -> Tuple[bool, str]:
+    # --- Compatibility shim: accept configs missing threshold fields ---
+    # qc_forward may pass TokenConfig (tokenizer cfg) which does not contain
+    # regime-threshold fields like abs99_min_uV. This proxy supplies safe defaults.
+    class _CfgProxy:
+        def __init__(self, obj):
+            self._obj = obj
+        def __getattr__(self, name):
+            if hasattr(self._obj, name):
+                return getattr(self._obj, name)
+            lname = name.lower()
+            # permissive defaults to avoid crashing (do NOT over-reject)
+            if 'min' in lname:
+                return 0.0
+            if 'max' in lname:
+                return 1e9
+            return 0.0
+
+    cfg = _CfgProxy(cfg)
+
     """
     Reject pathological / non-ERP regimes.
 

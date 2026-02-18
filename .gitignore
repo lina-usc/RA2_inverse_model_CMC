@@ -1,13 +1,43 @@
+cat > .gitignore <<'EOF'
+# --- Python ---
 __pycache__/
 *.py[cod]
-.DS_Store
+*.so
+*.dylib
+*.egg-info/
+dist/
+build/
+
+# --- Virtual environments ---
 .venv/
+venv/
+.venv_sbi/
+.venv_sbi*/
+
+# --- OS / editor ---
+.DS_Store
 .vscode/
-data/
-data_out/
+
+# --- Generated outputs / logs ---
 models_out/
 plots/
-*.h5
-*.npy
-*.npz
-*.zip
+data_out/
+results/
+runs/
+wandb/
+sbi-logs/
+paper/
+
+# --- Large data artifacts (keep code in data/ tracked) ---
+data/*.h5
+data/*.npy
+data/*.npz
+data/*.zip
+
+# --- ML artifacts ---
+*.tfevents.*
+*.ckpt
+*.pth
+*.pt
+*.keras
+EOF
