@@ -66,23 +66,16 @@ def _stable_softplus_np(x: np.ndarray) -> np.ndarray:
 
 
 def _tri_indices(p: int, ordering: str) -> Tuple[np.ndarray, np.ndarray]:
-    rr: List[int] = []
-    cc: List[int] = []
     if ordering == "row":
-        for i in range(p):
-            for j in range(i + 1):
-                rr.append(i); cc.append(j)
+        rr, cc = np.tril_indices(p)
     elif ordering == "col":
-        for j in range(p):
-            for i in range(j, p):
-                rr.append(i); cc.append(j)
+        cc, rr = np.tril_indices(p)
     elif ordering == "tfp":  # bottom row first (TFP fill_triangular style)
-        for i in range(p - 1, -1, -1):
-            for j in range(i + 1):
-                rr.append(i); cc.append(j)
+        rr, cc = np.tril_indices(p)
+        rr, cc = rr[::-1], cc[::-1]
     else:
         raise ValueError(f"Unknown ordering: {ordering}")
-    return np.asarray(rr, dtype=np.int32), np.asarray(cc, dtype=np.int32)
+    return rr.astype(np.int32), cc.astype(np.int32)
 
 
 def raw_tril_to_L_np(

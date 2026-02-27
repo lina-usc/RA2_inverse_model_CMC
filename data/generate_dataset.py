@@ -244,13 +244,12 @@ def main() -> None:
 
         bins = np.linspace(float(np.min(x)), float(np.max(x)), 21)
         centers = 0.5 * (bins[:-1] + bins[1:])
-        acc = np.zeros_like(centers, dtype=np.float32)
+        acc = np.full(len(centers), np.nan, dtype=np.float32)
 
+        bin_idx = np.searchsorted(bins[1:-1], x)  # assign each sample to a bin
         for b in range(len(centers)):
-            m = (x >= bins[b]) & (x < bins[b + 1])
-            if np.sum(m) < 10:
-                acc[b] = np.nan
-            else:
+            m = bin_idx == b
+            if m.sum() >= 10:
                 acc[b] = float(np.mean(ok[m]))
 
         plt.subplot(nrows, ncols, j + 1)
