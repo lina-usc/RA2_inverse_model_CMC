@@ -66,13 +66,17 @@ def _stable_softplus_np(x: np.ndarray) -> np.ndarray:
 
 
 def _tri_indices(p: int, ordering: str) -> Tuple[np.ndarray, np.ndarray]:
+    rr, cc = np.tril_indices(p)
     if ordering == "row":
-        rr, cc = np.tril_indices(p)
+        pass  # already row-major: (0,0),(1,0),(1,1),(2,0),...
     elif ordering == "col":
-        cc, rr = np.tril_indices(p)
+        # column-major: (0,0),(1,0),(2,0),(1,1),(2,1),(2,2),...
+        order = np.lexsort((rr, cc))  # primary key: cc ascending, then rr
+        rr, cc = rr[order], cc[order]
     elif ordering == "tfp":  # bottom row first (TFP fill_triangular style)
-        rr, cc = np.tril_indices(p)
-        rr, cc = rr[::-1], cc[::-1]
+        # (2,0),(2,1),(2,2),(1,0),(1,1),(0,0),...
+        order = np.lexsort((cc, -rr))  # primary key: rr descending, then cc
+        rr, cc = rr[order], cc[order]
     else:
         raise ValueError(f"Unknown ordering: {ordering}")
     return rr.astype(np.int32), cc.astype(np.int32)
