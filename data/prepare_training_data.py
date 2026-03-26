@@ -108,8 +108,10 @@ def main() -> None:
     cfg_fields = _token_cfg_fields()
     if args.tfr_method != "stft" and "tfr_method" not in cfg_fields:
         raise SystemExit(
-            "ERROR: --tfr-method morlet requested, but data.feature_tokens.TokenConfig does not have field 'tfr_method'.\n"
-            "You must update data/feature_tokens.py to add Morlet support (TokenConfig.tfr_method + compute_tfr_tokens backend).\n"
+            "ERROR: --tfr-method morlet requested, but "
+            "data.feature_tokens.TokenConfig does not have field 'tfr_method'.\n"
+            "You must update data/feature_tokens.py to add Morlet support "
+            "(TokenConfig.tfr_method + compute_tfr_tokens backend).\n"
             "If you want to keep current behavior, omit --tfr-method (default: stft)."
         )
 
@@ -223,7 +225,8 @@ def main() -> None:
                     b = str(b)
                     if b and (b != args.tfr_method):
                         raise SystemExit(
-                            f"ERROR: Requested --tfr-method {args.tfr_method}, but compute_tfr_tokens produced backend '{b}'. "
+                            f"ERROR: Requested --tfr-method {args.tfr_method}, but "
+                            f"compute_tfr_tokens produced backend '{b}'. "
                             "Check your data/feature_tokens.py implementation."
                         )
 
