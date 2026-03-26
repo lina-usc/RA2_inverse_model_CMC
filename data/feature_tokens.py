@@ -67,10 +67,7 @@ def compute_erp_tokens(eeg: np.ndarray, cfg: TokenConfig) -> np.ndarray:
         raise ValueError("duration*fs must be divisible by n_time_patches")
 
     w = n_t // cfg.n_time_patches
-    tokens = np.zeros((cfg.n_time_patches, cfg.n_channels), dtype=np.float32)
-    for i in range(cfg.n_time_patches):
-        sl = slice(i * w, (i + 1) * w)
-        tokens[i] = eeg[:, sl].mean(axis=1)
+    tokens = eeg.reshape(n_ch, cfg.n_time_patches, w).mean(axis=2).T.astype(np.float32)
     return tokens
 
 

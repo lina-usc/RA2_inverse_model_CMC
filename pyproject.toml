@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ra2-inverse-model-cmc"
+version = "0.1.0"
+description = "End-to-end Bayesian inverse modelling of EEG via canonical microcircuit simulation"
+requires-python = ">=3.10"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["data*", "sim*", "models*", "eval*", "utils*", "config*"]
+
+# ---------------------------------------------------------------------------
+# pytest
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--tb=short -v"
+
+# ---------------------------------------------------------------------------
+# coverage
+# ---------------------------------------------------------------------------
+[tool.coverage.run]
+source = ["data", "sim", "models", "eval"]
+omit = ["scripts/*", "tests/*"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+]
+
+# ---------------------------------------------------------------------------
+# ruff
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = [
+    "E402",   # module-level import not at top of file (common in research scripts)
+    "F401",   # imported but unused (re-exports in __init__.py)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"scripts/*" = ["E", "W", "F"]   # experimental scripts — lint-exempt
+"tests/*" = ["F811"]             # fixture redefinition

@@ -58,9 +58,9 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from scipy.stats import pearsonr
 
-# -----------------------------------------------------------------------------
+
 # Repo-relative imports
-# -----------------------------------------------------------------------------
+
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if BASE_DIR not in sys.path:
@@ -72,9 +72,9 @@ from models.param_transforms import theta_to_z, z_to_theta
 from models.posterior_fullcov import mvn_tril_nll, raw_tril_size
 
 
-# -----------------------------------------------------------------------------
+
 # Helpers
-# -----------------------------------------------------------------------------
+
 
 
 def _decode_str_array(arr: np.ndarray) -> List[str]:
@@ -688,9 +688,9 @@ def main() -> None:
         }
     )
 
-    # ------------------------
+    
     # Load data + meta
-    # ------------------------
+   
 
     X_path = _feature_path(args.data_out, args.features)
     if not os.path.isfile(X_path):
@@ -754,9 +754,9 @@ def main() -> None:
     # Ground-truth z
     z_true = theta_to_z(theta_true, prior_low, prior_high)
 
-    # ------------------------
+ 
     # Load models + predict
-    # ------------------------
+  
 
     custom = _get_custom_objects()
 
@@ -805,9 +805,9 @@ def main() -> None:
             f"Unexpected model output dim {out_dim}. Expected {2*P} (diag) or {P+n_tril} (fullcov)."
         )
 
-    # ------------------------
+  
     # Mixture posterior sampling
-    # ------------------------
+   
 
     pack = PackedTril(P=P, diag_eps=1e-3)
 
@@ -831,9 +831,9 @@ def main() -> None:
     theta_samps = z_to_theta(z_samps, prior_low, prior_high)
     theta_mean = np.mean(theta_samps, axis=1)
 
-    # ------------------------
+    
     # Mixture NLL in z-space
-    # ------------------------
+    
 
     # nll_k(z_true) using training-consistent mvn_tril_nll
     z_true_tf = tf.convert_to_tensor(z_true, dtype=tf.float32)
@@ -849,9 +849,9 @@ def main() -> None:
     logp_mix = _logmeanexp(logp, axis=0)
     nll_z = (-logp_mix).astype(np.float32)
 
-    # ------------------------
+    
     # Metrics
-    # ------------------------
+    
 
     rows = []
     for i, name in enumerate(param_names):
@@ -872,9 +872,9 @@ def main() -> None:
     metrics.to_csv(metrics_path, index=False)
     print("Wrote", metrics_path)
 
-    # ------------------------
+    
     # NLL histogram
-    # ------------------------
+  
 
     plt.figure(figsize=(7.0, 4.0))
     plt.hist(nll_z, bins=40)
@@ -887,9 +887,9 @@ def main() -> None:
     plt.close()
     print("Wrote", nll_fig)
 
-    # ------------------------
+   
     # Save outputs (.npz)
-    # ------------------------
+    
 
     out_npz = os.path.join(args.out_dir, f"eval_{args.split}_outputs.npz")
 

@@ -124,23 +124,22 @@ class HybridPositionalEncoding(tf.keras.layers.Layer):
         type_idx = np.zeros((n_tokens,), dtype=np.int32)
 
         # ERP tokens
-        for k in range(self.n_tokens_erp):
-            time_idx[k] = k
-            freq_idx[k] = 0
-            type_idx[k] = 0
+        k = np.arange(self.n_tokens_erp)
+        time_idx[k] = k
+        #freq_idx[k] = 0  # No need, already initialized to 0
+        #type_idx[k] = 0  # No need, already initialized to 0
 
         # TFR tokens
-        for k in range(n_tokens_tfr):
-            kk = self.n_tokens_erp + k
-            t = k // self.n_freq
-            f = k % self.n_freq
-            time_idx[kk] = t
-            freq_idx[kk] = f
-            type_idx[kk] = 1
+        # Vectorized assignment for TFR tokens
+        tfr_range = np.arange(n_tokens_tfr)
+        time_idx[self.n_tokens_erp:self.n_tokens_erp + n_tokens_tfr] = tfr_range // self.n_freq
+        freq_idx[self.n_tokens_erp:self.n_tokens_erp + n_tokens_tfr] = tfr_range % self.n_freq
+        type_idx[self.n_tokens_erp:self.n_tokens_erp + n_tokens_tfr] = 1
 
         self._time_idx = tf.constant(time_idx, dtype=tf.int32)
         self._freq_idx = tf.constant(freq_idx, dtype=tf.int32)
         self._type_idx = tf.constant(type_idx, dtype=tf.int32)
+
 
     def call(self, x: tf.Tensor) -> tf.Tensor:
         t = tf.gather(self.time_emb, self._time_idx)     # (tokens, d_model)
