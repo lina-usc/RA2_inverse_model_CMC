@@ -174,7 +174,8 @@ def main() -> None:
         while n_written < int(args.n):
             if n_attempts >= max_attempts:
                 raise SystemExit(
-                    f"ERROR: reached max_attempts={max_attempts} with only {n_written}/{args.n} accepted samples. "
+                    f"ERROR: reached max_attempts={max_attempts} with only "
+                    f"{n_written}/{args.n} accepted samples. "
                     f"Reject counts so far: {dict(counts)}"
                 )
 
