@@ -1,13 +1,15 @@
+from __future__ import annotations
 
 import argparse
-import os
 import csv
 import json
+import os
+
 import numpy as np
 
 import matplotlib
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402
+import matplotlib.pyplot as plt
 
 
 def _ensure_dir(p: str) -> None:
@@ -34,13 +36,30 @@ def _pick(npz, keys: list[str], required: bool = True):
     return None
 
 
-def main():
-    ap = argparse.ArgumentParser()
+def _set_plot_defaults() -> None:
+    plt.rcParams.update(
+        {
+            "font.size": 10,
+            "axes.titlesize": 11,
+            "axes.labelsize": 10,
+            "xtick.labelsize": 9,
+            "ytick.labelsize": 9,
+            "legend.fontsize": 9,
+        }
+    )
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description="Plot empirical coverage curves with bootstrap confidence bands.")
     ap.add_argument("--eval-npz", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--n-levels", type=int, default=19, help="Number of nominal CI levels in (0,1)")
+    ap.add_argument("--n-bootstrap", type=int, default=1000)
+    ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--dpi", type=int, default=300)
     args = ap.parse_args()
 
+    _set_plot_defaults()
     _ensure_dir(args.out)
     d = np.load(args.eval_npz)
 
@@ -61,41 +80,59 @@ def main():
 
     names = _decode_param_names(param_names) if param_names is not None else [f"param_{i}" for i in range(P)]
 
-    # Coverage curve levels
     levels = np.linspace(0.05, 0.95, args.n_levels)
+    cov = np.zeros((P, len(levels)), dtype=np.float64)
+    cov_lo = np.zeros_like(cov)
+    cov_hi = np.zeros_like(cov)
     rows = []
 
-    # Compute coverage per param and level
-    cov = np.zeros((P, len(levels)), dtype=np.float64)
+    rng = np.random.default_rng(args.seed)
+    boot_idx = rng.integers(0, N, size=(args.n_bootstrap, N), dtype=np.int64)
+
     for li, a in enumerate(levels):
         lo_q = (1.0 - a) / 2.0
         hi_q = 1.0 - lo_q
-        lo = np.quantile(theta_samps, lo_q, axis=1)  # (N,P)
+        lo = np.quantile(theta_samps, lo_q, axis=1)
         hi = np.quantile(theta_samps, hi_q, axis=1)
-        inside = (theta_true >= lo) & (theta_true <= hi)
+        inside = ((theta_true >= lo) & (theta_true <= hi)).astype(np.float32)  # (N,P)
         cov[:, li] = inside.mean(axis=0)
+        boot_cov = inside[boot_idx].mean(axis=1)  # (B,P)
+        cov_lo[:, li], cov_hi[:, li] = np.quantile(boot_cov, [0.025, 0.975], axis=0)
         for j in range(P):
-            rows.append([names[j], float(a), float(cov[j, li])])
+            rows.append([names[j], float(a), float(cov[j, li]), float(cov_lo[j, li]), float(cov_hi[j, li])])
 
     out_csv = os.path.join(args.out, "coverage_curve.csv")
     with open(out_csv, "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["param", "nominal", "empirical"])
+        w.writerow(["param", "nominal", "empirical", "empirical_lo", "empirical_hi"])
         w.writerows(rows)
 
-    # Plot grid (3x3 default for P=9)
+    coverage_summary_csv = os.path.join(args.out, "coverage_summary.csv")
+    with open(coverage_summary_csv, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["param", "cov50", "cov50_lo", "cov50_hi", "cov90", "cov90_lo", "cov90_hi"])
+        i50 = int(np.argmin(np.abs(levels - 0.50)))
+        i90 = int(np.argmin(np.abs(levels - 0.90)))
+        for j in range(P):
+            w.writerow([
+                names[j],
+                cov[j, i50], cov_lo[j, i50], cov_hi[j, i50],
+                cov[j, i90], cov_lo[j, i90], cov_hi[j, i90],
+            ])
+
     ncols = 3
     nrows = int(np.ceil(P / ncols))
-    fig, axes = plt.subplots(nrows, ncols, figsize=(4.2*ncols, 3.8*nrows))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(4.8 * ncols, 4.0 * nrows))
     axes = np.asarray(axes).reshape(-1)
 
     for j in range(P):
         ax = axes[j]
-        ax.plot(levels, cov[j], marker="o", markersize=3)
-        ax.plot([0, 1], [0, 1])
+        ax.fill_between(levels, cov_lo[j], cov_hi[j], alpha=0.22)
+        ax.plot(levels, cov[j], marker="o", markersize=3.5, linewidth=1.8)
+        ax.plot([0, 1], [0, 1], linestyle="--", linewidth=1.0, color="black")
         ax.set_title(names[j])
-        ax.set_xlabel("nominal CI level")
-        ax.set_ylabel("empirical coverage")
+        ax.set_xlabel("Nominal credible level")
+        ax.set_ylabel("Empirical coverage")
         ax.set_xlim(0, 1)
         ax.set_ylim(0, 1)
         ax.grid(True, alpha=0.25)
@@ -105,18 +142,20 @@ def main():
 
     fig.tight_layout()
     out_png = os.path.join(args.out, "coverage_curves.png")
-    fig.savefig(out_png, dpi=200)
+    fig.savefig(out_png, dpi=args.dpi)
+    fig.savefig(out_png.replace(".png", ".pdf"))
     plt.close(fig)
 
-    # Summary JSON
     cal_err = float(np.mean(np.abs(cov - levels[None, :])))
     summary = {
         "eval_npz": args.eval_npz,
         "n_eval": int(N),
         "n_post_samples": int(S),
+        "n_bootstrap": int(args.n_bootstrap),
         "mean_abs_calibration_error": cal_err,
         "wrote": {
             "csv": os.path.basename(out_csv),
+            "summary_csv": os.path.basename(coverage_summary_csv),
             "png": os.path.basename(out_png),
         },
     }
@@ -125,6 +164,7 @@ def main():
 
     print("[plot_reliability] wrote:", out_png)
     print("[plot_reliability] wrote:", out_csv)
+    print("[plot_reliability] wrote:", coverage_summary_csv)
 
 
 if __name__ == "__main__":

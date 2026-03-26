@@ -3,296 +3,245 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from typing import Dict, List
+import time
+from collections import Counter
+from dataclasses import asdict
 
-import numpy as np
 import h5py
+import numpy as np
 
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402
-
+from data.feature_tokens import TokenConfig
+from data.priors import build_prior_spec, sample_theta
 from sim import simulate_eeg
-from sim.leadfield_mne import make_leadfield, DEFAULT_16_CH_NAMES
+from sim.leadfield_mne import DEFAULT_16_CH_NAMES, make_leadfield
 from sim.regime_filter import RegimeFilterConfig, regime_reject
 
-from data.priors import build_prior_spec, sample_theta
+
+def _require(cond: bool, msg: str) -> None:
+    if not cond:
+        raise SystemExit(f"ERROR: {msg}")
 
 
-def _savefig(path: str) -> None:
-    plt.tight_layout()
-    plt.savefig(path, dpi=200)
-    plt.close()
+def _theta_from_params_dict(params: dict[str, float], names: list[str]) -> np.ndarray:
+    theta = np.asarray([float(params[n]) for n in names], dtype=np.float32)
+    if theta.ndim != 1:
+        raise SystemExit(f"ERROR: theta must be rank-1, got shape={theta.shape}")
+    if not np.all(np.isfinite(theta)):
+        raise SystemExit("ERROR: theta contains non-finite values")
+    return theta
+
+
+def _check_theta_probe(name: str, arr: np.ndarray) -> None:
+    arr = np.asarray(arr, dtype=np.float32)
+    if arr.ndim != 2:
+        raise SystemExit(f"ERROR: {name} must be rank-2, got shape={arr.shape}")
+    if arr.shape[0] == 0:
+        raise SystemExit(f"ERROR: {name} is empty")
+    if not np.all(np.isfinite(arr)):
+        raise SystemExit(f"ERROR: {name} contains non-finite values")
+
+    std = arr.std(axis=0)
+    mn = float(arr.min())
+    mx = float(arr.max())
+
+    print(f"[generate_dataset] {name} shape={arr.shape} min={mn:.6g} max={mx:.6g}")
+    print(f"[generate_dataset] {name} std per param={std}")
+
+    if abs(mx - mn) < 1e-12 or np.all(std < 1e-12):
+        raise SystemExit(
+            f"ERROR: degenerate {name}: values are constant or zero-variance. "
+            f"min={mn} max={mx} std={std}"
+        )
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--n", type=int, default=20000, help="Number of ACCEPTED samples to store.")
-    ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--out", type=str, default="data/synthetic_cmc_dataset.h5")
-    ap.add_argument("--overwrite", action="store_true")
-    args = ap.parse_args()
 
-    os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
-    qc_dir = os.path.join("plots", "qc_dataset")
-    os.makedirs(qc_dir, exist_ok=True)
+    ap.add_argument("--out", type=str, default="data/synthetic_cmc_dataset.h5")
+    ap.add_argument("--n", type=int, default=10000)
+    ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--overwrite", action="store_true")
+
+    ap.add_argument("--leadfield-seed", type=int, default=0)
+    ap.add_argument("--n-sources", type=int, default=3)
+    ap.add_argument("--n-trials", type=int, default=10)
+    ap.add_argument("--internal-fs", type=int, default=1000)
+
+    ap.add_argument("--input-noise-std", type=float, default=0.2)
+    ap.add_argument("--sensor-noise-std", type=float, default=2.0)
+    ap.add_argument("--stim-sigma", type=float, default=0.05)
+    ap.add_argument("--warmup-sec", type=float, default=3.0)
+    ap.add_argument("--uV-scale", type=float, default=100.0)
+
+    ap.add_argument("--bandpass-lo", type=float, default=0.5)
+    ap.add_argument("--bandpass-hi", type=float, default=40.0)
+    ap.add_argument("--downsample-method", choices=["slice", "poly"], default="slice")
+
+    ap.add_argument("--baseline-correct", dest="baseline_correct", action="store_true")
+    ap.add_argument("--no-baseline-correct", dest="baseline_correct", action="store_false")
+    ap.set_defaults(baseline_correct=True)
+
+    ap.add_argument("--stim-causal", dest="stim_causal", action="store_true")
+    ap.add_argument("--stim-noncausal", dest="stim_causal", action="store_false")
+    ap.set_defaults(stim_causal=True)
+
+    ap.add_argument(
+        "--max-attempts",
+        type=int,
+        default=0,
+        help="0 means auto=50*n accepted-target attempts cap.",
+    )
+
+    args = ap.parse_args()
 
     if os.path.exists(args.out) and not args.overwrite:
         raise SystemExit(f"ERROR: {args.out} exists. Use --overwrite.")
+    os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
 
-    # ---------------- Forward config (paper-explicit) ----------------
-    fs = 250
-    duration = 2.0
-    n_channels = 16
+    # Use the same default config that the rest of the repo uses.
+    cfg = TokenConfig()
+    fs = int(cfg.fs)
+    duration = float(cfg.duration)
+    n_channels = int(cfg.n_channels)
+    stim_onset = float(cfg.stim_onset)
+    n_time = int(round(fs * duration))
 
-    stim_onset = 0.5
-    stim_sigma = 0.05
-    warmup_sec = 3.0  # MUST be > 0
-
-    n_sources = 3
-    n_trials = 10
-
-    input_noise_std = 0.2
-    sensor_noise_std = 2.0
-
-    internal_fs = 1000
-    bandpass = (0.5, 40.0)
-
-    baseline_correct = True
-    baseline_window = None
-    downsample_method = "slice"
-    uV_scale = 100.0
-
-    # deterministic leadfield (stored in file)
-    L, info, lf_meta, ch_pos, src_pos, src_ori = make_leadfield(fs=fs, n_sources=n_sources, seed=0)
-    ch_names = list(DEFAULT_16_CH_NAMES)
-
-    # regime filter config
     rf_cfg = RegimeFilterConfig(fs=fs, duration=duration, stim_onset=stim_onset)
 
-    # ---------------- Priors (paper-explicit) ----------------
-    names, prior_low, prior_high, prior_dist, prior_params, prior_json = build_prior_spec()
+    L, _info, meta, _ch_pos, _src_pos, _src_ori = make_leadfield(
+        fs=fs,
+        n_sources=int(args.n_sources),
+        ch_names=list(DEFAULT_16_CH_NAMES[:n_channels]),
+        seed=int(args.leadfield_seed),
+    )
+
+    names, low, high, dist, prior_params, prior_json = build_prior_spec()
+    names = [str(x) for x in names]
+    low = np.asarray(low, dtype=np.float32)
+    high = np.asarray(high, dtype=np.float32)
+    prior_params = np.asarray(prior_params, dtype=np.float32)
+    prior_dist = np.asarray(dist, dtype="S")
     P = len(names)
 
-    # ---------------- H5 allocation ----------------
-    n_time = int(round(duration * fs))
+    _require(low.shape == (P,), f"prior_low shape mismatch: {low.shape} vs {(P,)}")
+    _require(high.shape == (P,), f"prior_high shape mismatch: {high.shape} vs {(P,)}")
 
-    dt_str = h5py.string_dtype(encoding="utf-8")
+    max_attempts = int(args.max_attempts) if int(args.max_attempts) > 0 else int(50 * args.n)
+    rng = np.random.default_rng(args.seed)
+    counts = Counter()
+
+    t0 = time.perf_counter()
 
     with h5py.File(args.out, "w") as f:
-        # core datasets (accepted-only)
-        d_eeg = f.create_dataset(
-            "eeg",
-            shape=(args.n, n_channels, n_time),
-            dtype="float32",
-            chunks=(1, n_channels, n_time),
-            compression="gzip",
-            compression_opts=4,
-            shuffle=True,
-        )
-        d_theta = f.create_dataset("theta", shape=(args.n, P), dtype="float32")
-        d_sim_seed = f.create_dataset("sim_seed", shape=(args.n,), dtype="int64")
+        d_eeg = f.create_dataset("eeg", shape=(int(args.n), n_channels, n_time), dtype="float32")
+        d_theta = f.create_dataset("theta", shape=(int(args.n), P), dtype="float32")
+        d_seed = f.create_dataset("sim_seed", shape=(int(args.n),), dtype="int64")
 
-        # store leadfield + channel names
-        f.create_dataset("leadfield", data=L.astype(np.float32))
-        f.create_dataset("ch_names", data=np.array(ch_names, dtype="S"))
+        f.create_dataset("ch_names", data=np.asarray(DEFAULT_16_CH_NAMES[:n_channels], dtype="S"))
+        f.create_dataset("leadfield", data=np.asarray(L, dtype=np.float32))
+        f.create_dataset("leadfield_meta_json", data=np.bytes_(json.dumps(asdict(meta))))
 
-        # store prior meta inside H5 for provenance
-        f.create_dataset("param_names", data=np.array(names, dtype="S"))
-        f.create_dataset("prior_low", data=prior_low.astype(np.float32))
-        f.create_dataset("prior_high", data=prior_high.astype(np.float32))
-        f.create_dataset("prior_dist", data=np.array(prior_dist, dtype="S"))
-        f.create_dataset("prior_params", data=prior_params.astype(np.float32))
-        f.create_dataset("prior_spec_json", data=np.array(prior_json, dtype=dt_str), dtype=dt_str)
+        f.create_dataset("param_names", data=np.asarray(names, dtype="S"))
+        f.create_dataset("prior_low", data=low)
+        f.create_dataset("prior_high", data=high)
+        f.create_dataset("prior_dist", data=prior_dist)
+        f.create_dataset("prior_params", data=prior_params)
+        f.create_dataset("prior_spec_json", data=np.bytes_(str(prior_json)))
 
-        # forward settings (attributes)
-        f.attrs["fs"] = fs
+        f.attrs["fs"] = int(fs)
         f.attrs["duration_sec"] = float(duration)
-        f.attrs["n_channels"] = n_channels
-        f.attrs["stim_shape"] = "gaussian"
+        f.attrs["n_channels"] = int(n_channels)
         f.attrs["stim_onset_sec"] = float(stim_onset)
-        f.attrs["stim_sigma_sec"] = float(stim_sigma)
-        f.attrs["warmup_sec"] = float(warmup_sec)
-        f.attrs["n_sources"] = int(n_sources)
-        f.attrs["n_trials"] = int(n_trials)
-        f.attrs["input_noise_std"] = float(input_noise_std)
-        f.attrs["sensor_noise_std"] = float(sensor_noise_std)
-        f.attrs["internal_fs"] = int(internal_fs)
-        f.attrs["bandpass_lo_hz"] = float(bandpass[0])
-        f.attrs["bandpass_hi_hz"] = float(bandpass[1])
-        f.attrs["baseline_correct"] = int(bool(baseline_correct))
-        f.attrs["downsample_method"] = str(downsample_method)
-        f.attrs["uV_scale"] = float(uV_scale)
+        f.attrs["stim_sigma_sec"] = float(args.stim_sigma)
+        f.attrs["warmup_sec"] = float(args.warmup_sec)
+        f.attrs["bandpass_lo_hz"] = float(args.bandpass_lo)
+        f.attrs["bandpass_hi_hz"] = float(args.bandpass_hi)
+        f.attrs["n_sources"] = int(args.n_sources)
+        f.attrs["n_trials"] = int(args.n_trials)
+        f.attrs["input_noise_std"] = float(args.input_noise_std)
+        f.attrs["sensor_noise_std"] = float(args.sensor_noise_std)
+        f.attrs["internal_fs"] = int(args.internal_fs)
+        f.attrs["baseline_correct"] = int(bool(args.baseline_correct))
+        f.attrs["downsample_method"] = str(args.downsample_method)
+        f.attrs["uV_scale"] = float(args.uV_scale)
+        f.attrs["stim_causal"] = int(bool(args.stim_causal))
+        f.attrs["generator_seed"] = int(args.seed)
+        f.attrs["leadfield_seed"] = int(args.leadfield_seed)
 
-        # leadfield meta JSON
-        lf_meta_json = json.dumps({
-            "montage_name": lf_meta.montage_name,
-            "head_radius_m": lf_meta.head_radius_m,
-            "source_radius_m": lf_meta.source_radius_m,
-            "n_sources": lf_meta.n_sources,
-            "seed": lf_meta.seed,
-        }, indent=2)
-        f.create_dataset("leadfield_meta_json", data=np.array(lf_meta_json, dtype=dt_str), dtype=dt_str)
+        n_written = 0
+        n_attempts = 0
 
-        # ---------------- Generation loop ----------------
-        rng = np.random.default_rng(args.seed)
+        while n_written < int(args.n):
+            if n_attempts >= max_attempts:
+                raise SystemExit(
+                    f"ERROR: reached max_attempts={max_attempts} with only {n_written}/{args.n} accepted samples. "
+                    f"Reject counts so far: {dict(counts)}"
+                )
 
-        reject_counts: Dict[str, int] = {}
-        tries = 0
-        i = 0
+            n_attempts += 1
 
-        attempted_theta: List[np.ndarray] = []
-        attempted_ok: List[bool] = []
-
-        print(f"[generate_dataset] target accepted N={args.n} -> {args.out}")
-        while i < args.n:
-            tries += 1
-
-            theta, p = sample_theta(rng, names, prior_low, prior_high, prior_dist, prior_params)
+            # sample_theta may return a broken first output in your repo.
+            # We therefore rebuild theta from the simulator params dict in canonical order.
+            _theta_unused, params = sample_theta(rng, names, low, high, dist, prior_params)
+            theta_vec = _theta_from_params_dict(params, names)
 
             sim_seed = int(rng.integers(0, np.iinfo(np.int32).max))
+
             eeg = simulate_eeg(
-                params=p,
+                params=params,
                 fs=fs,
                 duration=duration,
                 n_channels=n_channels,
                 seed=sim_seed,
-                bandpass=bandpass,
+                bandpass=(float(args.bandpass_lo), float(args.bandpass_hi)),
                 stim_onset=stim_onset,
-                stim_sigma=stim_sigma,
-                n_sources=n_sources,
+                stim_sigma=float(args.stim_sigma),
+                stim_causal=bool(args.stim_causal),
+                n_sources=int(args.n_sources),
                 leadfield=L,
-                sensor_noise_std=sensor_noise_std,
-                n_trials=n_trials,
-                input_noise_std=input_noise_std,
-                internal_fs=internal_fs,
-                baseline_correct=baseline_correct,
-                baseline_window=baseline_window,
-                warmup_sec=warmup_sec,
-                downsample_method=downsample_method,
-                uV_scale=uV_scale,
+                sensor_noise_std=float(args.sensor_noise_std),
+                n_trials=int(args.n_trials),
+                input_noise_std=float(args.input_noise_std),
+                internal_fs=int(args.internal_fs),
+                baseline_correct=bool(args.baseline_correct),
+                baseline_window=None,
+                warmup_sec=float(args.warmup_sec),
+                downsample_method=str(args.downsample_method),
+                uV_scale=float(args.uV_scale),
             )
 
             ok, reason = regime_reject(eeg, rf_cfg)
-            reject_counts[reason] = reject_counts.get(reason, 0) + 1
-
-            attempted_theta.append(theta.copy())
-            attempted_ok.append(bool(ok))
-
+            counts[str(reason)] += 1
             if not ok:
                 continue
 
-            d_eeg[i] = eeg.astype(np.float32)
-            d_theta[i] = theta.astype(np.float32)
-            d_sim_seed[i] = np.int64(sim_seed)
+            d_eeg[n_written] = np.asarray(eeg, dtype=np.float32)
+            d_theta[n_written] = theta_vec
+            d_seed[n_written] = sim_seed
+            n_written += 1
 
-            i += 1
-            if i % 500 == 0:
-                acc_rate = i / tries
-                print(f"  accepted {i}/{args.n} | tries={tries} | accept_rate={acc_rate:.3f}")
+            if n_written % 500 == 0 or n_written == int(args.n):
+                probe = np.asarray(d_theta[: min(n_written, 2048)], dtype=np.float32)
+                print(
+                    f"[generate_dataset] accepted {n_written}/{args.n} "
+                    f"after {n_attempts} attempts | accept_rate={n_written / max(1, n_attempts):.3f}"
+                )
+                print(f"[generate_dataset] theta probe std={probe.std(axis=0)}")
+                f.flush()
 
-        # end while
-        accept_rate = float(args.n / tries)
-        print("[generate_dataset] DONE")
-        print("reject_counts:", reject_counts)
-        print("accept_rate:", accept_rate)
+        f.attrs["n_attempts_total"] = int(n_attempts)
+        f.attrs["accept_rate"] = float(n_written / max(1, n_attempts))
+        f.attrs["reject_counts_json"] = np.bytes_(json.dumps(dict(counts)))
+        f.flush()
 
-        # store generation summary inside file too
-        f.attrs["tries"] = int(tries)
-        f.attrs["accept_rate"] = accept_rate
-        f.create_dataset("reject_counts_json", data=np.array(json.dumps(reject_counts, indent=2), dtype=dt_str), dtype=dt_str)
+    with h5py.File(args.out, "r") as f:
+        th = np.asarray(f["theta"][: min(int(args.n), 2048)], dtype=np.float32)
+        _check_theta_probe("final H5 theta", th)
 
-    # ---------------- QC plots after file close ----------------
-    attempted_theta_arr = np.stack(attempted_theta, axis=0).astype(np.float32)  # (tries,P)
-    attempted_ok_arr = np.array(attempted_ok, dtype=bool)
-    accepted_theta_arr = attempted_theta_arr[attempted_ok_arr]
-
-    # save arrays for paper/provenance
-    np.save(os.path.join(qc_dir, "attempted_theta.npy"), attempted_theta_arr)
-    np.save(os.path.join(qc_dir, "accepted_theta.npy"), accepted_theta_arr)
-    np.save(os.path.join(qc_dir, "attempted_ok.npy"), attempted_ok_arr)
-
-    # plot: rejection reasons
-    plt.figure(figsize=(7, 4))
-    keys = list(reject_counts.keys())
-    vals = [reject_counts[k] for k in keys]
-    plt.bar(keys, vals)
-    plt.xticks(rotation=30, ha="right")
-    plt.ylabel("count")
-    plt.title(f"Regime filter outcomes (accept_rate={accept_rate:.3f})")
-    _savefig(os.path.join(qc_dir, "00_reject_reasons.png"))
-
-    # plot: prior vs accepted hist (grid)
-    ncols = 3
-    nrows = int(np.ceil(P / ncols))
-    plt.figure(figsize=(12, 3.5 * nrows))
-    for j in range(P):
-        plt.subplot(nrows, ncols, j + 1)
-        plt.hist(attempted_theta_arr[:, j], bins=40, alpha=0.6, density=True, label="prior draws (attempted)")
-        plt.hist(accepted_theta_arr[:, j], bins=40, alpha=0.6, density=True, label="accepted (effective prior)")
-        plt.title(names[j])
-        plt.xlabel("value")
-        plt.ylabel("density")
-        plt.legend(fontsize=8)
-    _savefig(os.path.join(qc_dir, "01_prior_vs_effective_prior_hist.png"))
-
-    # plot: acceptance rate vs parameter (binned)
-    plt.figure(figsize=(12, 3.5 * nrows))
-    for j in range(P):
-        x = attempted_theta_arr[:, j]
-        ok = attempted_ok_arr.astype(np.float32)
-
-        bins = np.linspace(float(np.min(x)), float(np.max(x)), 21)
-        centers = 0.5 * (bins[:-1] + bins[1:])
-        acc = np.full(len(centers), np.nan, dtype=np.float32)
-
-        bin_idx = np.searchsorted(bins[1:-1], x)  # assign each sample to a bin
-        for b in range(len(centers)):
-            m = bin_idx == b
-            if m.sum() >= 10:
-                acc[b] = float(np.mean(ok[m]))
-
-        plt.subplot(nrows, ncols, j + 1)
-        plt.plot(centers, acc, marker="o", linewidth=2)
-        plt.ylim(0.0, 1.0)
-        plt.title(names[j])
-        plt.xlabel("value")
-        plt.ylabel("P(accept | value)")
-    _savefig(os.path.join(qc_dir, "02_acceptance_rate_vs_param.png"))
-
-    # save a JSON log for the paper
-    log = {
-        "out": args.out,
-        "seed": args.seed,
-        "n_accepted": args.n,
-        "tries": int(tries),
-        "accept_rate": float(accept_rate),
-        "reject_counts": reject_counts,
-        "forward_cfg": {
-            "fs": fs,
-            "duration": duration,
-            "n_channels": n_channels,
-            "stim_onset": stim_onset,
-            "stim_sigma": stim_sigma,
-            "warmup_sec": warmup_sec,
-            "n_sources": n_sources,
-            "n_trials": n_trials,
-            "input_noise_std": input_noise_std,
-            "sensor_noise_std": sensor_noise_std,
-            "internal_fs": internal_fs,
-            "bandpass": list(bandpass),
-            "baseline_correct": baseline_correct,
-            "downsample_method": downsample_method,
-            "uV_scale": uV_scale,
-        },
-        "param_names": names,
-        "prior_spec_json": json.loads(prior_json),
-        "qc_dir": qc_dir,
-    }
-    with open(os.path.join(qc_dir, "generation_log.json"), "w") as f:
-        json.dump(log, f, indent=2)
-
-    print(f"[generate_dataset] QC plots/logs written to: {qc_dir}")
+    t1 = time.perf_counter()
+    print(f"[generate_dataset] wrote: {args.out}")
+    print(f"[generate_dataset] n={args.n} attempts={n_attempts} accept_rate={args.n / max(1, n_attempts):.3f}")
+    print(f"[generate_dataset] total_sec={t1 - t0:.2f} sec_per_accept={(t1 - t0) / max(1, args.n):.4f}")
 
 
 if __name__ == "__main__":
