@@ -65,6 +65,7 @@ def simulate_sources_batch(
     input_noise_std: float,
     n_sims: int,
     seed: Optional[int],
+    stim_causal: bool = False,
 ) -> np.ndarray:
     """
     Vectorized CMC simulation for many independent realizations in one time loop.
@@ -88,7 +89,7 @@ def simulate_sources_batch(
     # External drive: baseline + explicit Gaussian bump + independent noise
     p0 = float(params.get("p0", 0.5))
     stim_amp = float(params.get("stim_amp", 1.0))
-    stim = gaussian_bump(t, onset=stim_onset, sigma=stim_sigma, amp=stim_amp)  # (n_int,)
+    stim = gaussian_bump(t, onset=stim_onset, sigma=stim_sigma, amp=stim_amp, causal=stim_causal)  # (n_int,)
 
     u = p0 + stim[None, :] + rng.normal(0.0, float(input_noise_std), size=(int(n_sims), n_int))
 
@@ -162,4 +163,5 @@ def simulate_sources(
         input_noise_std=input_noise_std,
         n_sims=int(n_sources),
         seed=seed,
+        stim_causal=stim_causal,
     )

@@ -1,3 +1,4 @@
+from __future__ import annotations
 
 import argparse
 import os
@@ -6,7 +7,7 @@ import numpy as np
 
 import matplotlib
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402
+import matplotlib.pyplot as plt
 
 
 def _ensure_dir(p: str) -> None:
@@ -33,13 +34,30 @@ def _pick(npz, keys: list[str], required: bool = True):
     return None
 
 
-def main():
-    ap = argparse.ArgumentParser()
+def _set_plot_defaults() -> None:
+    plt.rcParams.update(
+        {
+            "font.size": 10,
+            "axes.titlesize": 11,
+            "axes.labelsize": 10,
+            "xtick.labelsize": 9,
+            "ytick.labelsize": 9,
+            "legend.fontsize": 9,
+        }
+    )
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description="Plot SBC histograms with a readable uniform envelope.")
     ap.add_argument("--eval-npz", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--bins", type=int, default=20)
+    ap.add_argument("--n-envelope-sims", type=int, default=4000)
+    ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--dpi", type=int, default=300)
     args = ap.parse_args()
 
+    _set_plot_defaults()
     _ensure_dir(args.out)
     d = np.load(args.eval_npz)
 
@@ -60,36 +78,38 @@ def main():
 
     names = _decode_param_names(param_names) if param_names is not None else [f"param_{i}" for i in range(P)]
 
-    # ranks in [0, S]
-    # rank = number of posterior samples < true value
-    ranks = np.sum(theta_samps < theta_true[:, None, :], axis=1).astype(np.int32)  # (N,P)
-
-    # Save ranks for paper provenance
+    ranks = np.sum(theta_samps < theta_true[:, None, :], axis=1).astype(np.int32)
     out_npz = os.path.join(args.out, "sbc_ranks.npz")
     np.savez(out_npz, ranks=ranks, n_post_samples=np.array(S), param_names=np.array(names, dtype="S"))
 
-    # Plot histograms
     ncols = 3
     nrows = int(np.ceil(P / ncols))
-    fig, axes = plt.subplots(nrows, ncols, figsize=(4.2*ncols, 3.8*nrows))
+    fig, axes = plt.subplots(nrows, ncols, figsize=(4.8 * ncols, 4.0 * nrows))
     axes = np.asarray(axes).reshape(-1)
 
-    # bins over 0..S
+    rng = np.random.default_rng(args.seed)
     bin_edges = np.linspace(0, S, args.bins + 1)
+    n_bins = len(bin_edges) - 1
+    expected = N / n_bins
+    sim_counts = rng.multinomial(N, [1.0 / n_bins] * n_bins, size=args.n_envelope_sims)
+    env_lo = np.quantile(sim_counts, 0.025, axis=0)
+    env_hi = np.quantile(sim_counts, 0.975, axis=0)
+    centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+    widths = np.diff(bin_edges)
 
-    # simple chi-square vs uniform (diagnostic only)
     chi2 = []
     for j in range(P):
         counts, _ = np.histogram(ranks[:, j], bins=bin_edges)
-        expected = counts.sum() / len(counts)
         stat = float(np.sum((counts - expected) ** 2 / (expected + 1e-9)))
         chi2.append(stat)
 
         ax = axes[j]
-        ax.hist(ranks[:, j], bins=bin_edges)
+        ax.bar(centers, counts, width=widths, align="center", alpha=0.85)
+        ax.fill_between(centers, env_lo, env_hi, step="mid", alpha=0.22)
+        ax.axhline(expected, linestyle="--", linewidth=1.0, color="black")
         ax.set_title(f"{names[j]} (chi2={stat:.1f})")
-        ax.set_xlabel("rank")
-        ax.set_ylabel("count")
+        ax.set_xlabel("Rank")
+        ax.set_ylabel("Count")
         ax.grid(True, alpha=0.25)
 
     for k in range(P, len(axes)):
@@ -97,7 +117,8 @@ def main():
 
     fig.tight_layout()
     out_png = os.path.join(args.out, "sbc_rank_hist.png")
-    fig.savefig(out_png, dpi=200)
+    fig.savefig(out_png, dpi=args.dpi)
+    fig.savefig(out_png.replace(".png", ".pdf"))
     plt.close(fig)
 
     summary = {
@@ -105,6 +126,7 @@ def main():
         "n_eval": int(N),
         "n_post_samples": int(S),
         "bins": int(args.bins),
+        "n_envelope_sims": int(args.n_envelope_sims),
         "chi2_by_param": {names[j]: chi2[j] for j in range(P)},
         "wrote": {
             "png": os.path.basename(out_png),

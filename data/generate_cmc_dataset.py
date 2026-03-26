@@ -20,6 +20,7 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--out-dir", type=str, default="data_out")
     ap.add_argument("--overwrite", action="store_true")
+    ap.add_argument("--stim-causal", action="store_true", help="Use causal (truncated) Gaussian stimulus: stim(t)=0 for t<onset.")
     args = ap.parse_args()
 
     os.makedirs(args.out_dir, exist_ok=True)
@@ -34,6 +35,7 @@ def main() -> None:
         "n_channels": cfg.n_channels,
         "stim_onset": cfg.stim_onset,
         "stim_sigma": 0.05,     # Gaussian bump width (seconds)
+        "stim_causal": bool(getattr(args, "stim_causal", False)),
         "warmup_sec": 3.0,      # MUST be > 0 (steady state)
         "n_sources": 3,
         "n_trials": 10,
@@ -121,6 +123,7 @@ def main() -> None:
             n_channels=int(sim_cfg["n_channels"]),
             stim_onset=float(sim_cfg["stim_onset"]),
             stim_sigma=float(sim_cfg["stim_sigma"]),
+            stim_causal=bool(sim_cfg.get("stim_causal", False)),
             warmup_sec=float(sim_cfg["warmup_sec"]),
             n_sources=int(sim_cfg["n_sources"]),
             n_trials=int(sim_cfg["n_trials"]),

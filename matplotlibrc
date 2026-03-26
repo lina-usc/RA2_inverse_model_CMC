@@ -1,0 +1,9 @@
+font.size: 9
+axes.titlesize: 9
+axes.labelsize: 9
+xtick.labelsize: 8
+ytick.labelsize: 8
+legend.fontsize: 8
+figure.titlesize: 10
+savefig.dpi: 300
+figure.dpi: 150
