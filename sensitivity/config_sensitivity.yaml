@@ -1,0 +1,103 @@
+paths:
+  results_root: results_sensitivity
+figures:
+  formats:
+  - png
+  - pdf
+caching:
+  use_cache: true
+simulator:
+  fs: 250
+  duration: 2.0
+  n_channels: 16
+  stim_onset: 0.5
+  stim_sigma: 0.05
+  warmup_sec: 3.0
+  n_sources: 3
+  n_trials: 10
+  input_noise_std: 0.2
+  sensor_noise_std: 2.0
+  internal_fs: 1000
+  bandpass:
+  - 0.5
+  - 40.0
+  baseline_correct: true
+  baseline_window:
+  - 0.0
+  - 0.5
+  downsample_method: slice
+  uV_scale: 100.0
+  stim_causal: true
+deterministic_wrapper:
+  seed: 314159
+acceptance:
+  post_window_sec: 0.6
+  late_window_sec: 0.5
+  non_negligible_rate: 0.01
+bands:
+  delta:
+  - 0.5
+  - 4.0
+  theta:
+  - 4.0
+  - 8.0
+  alpha:
+  - 8.0
+  - 12.0
+  beta:
+  - 13.0
+  - 30.0
+  gamma:
+  - 30.0
+  - 40.0
+morris:
+  num_levels: 6
+  grid_jump: 3
+  num_trajectories: 96
+  candidate_pool_size: 256
+  seed: 2026
+  n_jobs: 4
+  standardize_outputs: true
+  mask_rejected_outputs: true
+sobol:
+  base_samples: 1024
+  seed: 2027
+  n_jobs: 4
+  bootstrap_resamples: 500
+  second_order: false
+  pca_components: 0
+  selected_scalar_outputs:
+  - gfp_peak_amp_uV
+  - gfp_peak_latency_s
+  - gfp_auc_post_uV_s
+  - erp_auc_post_absmean_uV_s
+  - cz_peak_abs_uV
+  - cz_peak_latency_s
+  - band_delta_db
+  - band_theta_db
+  - band_alpha_db
+  - band_beta_db
+  - band_gamma_db
+  families:
+  - scalar
+recoverability:
+  files:
+    erp: /Users/ronicksaraswat/RA2_inverse_model_CMC/paper_packet_v2_20260316_134743/plots/eval_erp_ens/metrics_test.csv
+    tfr: /Users/ronicksaraswat/RA2_inverse_model_CMC/paper_packet_v2_20260316_134743/plots/eval_tfr_ens/metrics_test.csv
+    hybrid: /Users/ronicksaraswat/RA2_inverse_model_CMC/paper_packet_v2_20260316_134743/plots/eval_hybrid_ens/metrics_test.csv
+  fallback_to_reference: false
+tokenizer:
+  fs: 250
+  duration: 2.0
+  n_channels: 16
+  stim_onset: 0.5
+  n_time_patches: 25
+  n_freq_patches: 15
+  f_min: 4.0
+  f_max: 40.0
+  tfr_method: morlet
+  morlet_n_freqs: 48
+  morlet_n_cycles_low: 4.0
+  morlet_n_cycles_high: 8.0
+  morlet_decim: 1
+  morlet_n_jobs: 1

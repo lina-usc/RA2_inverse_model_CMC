@@ -41,3 +41,24 @@ data/*.zip
 *.pt
 *.keras
 EOF
+# --- Safe publish ignore rules ---
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+.idea/
+models_out*/
+plots*/
+figures/
+figures*/
+data_out
+data_out*/
+results*/
+paper_packet*
+*.log
+*.h5
+*.npy
+*.npz
+*.zip
