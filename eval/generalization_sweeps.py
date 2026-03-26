@@ -138,8 +138,11 @@ def _load_scaler_and_mask(first_model_dir: str, data_out: str, features: str, n_
         if "token_mask_1d" in dmc.files:
             token_mask_1d = dmc["token_mask_1d"].astype(np.float32)
             if token_mask_1d.shape[0] != n_tokens:
-                raise SystemExit(f"ERROR: token_mask_1d len={token_mask_1d.shape[0]} but n_tokens={n_tokens}")
-            return mu, sd, token_mask_1d
+                raise SystemExit(
+                    f"ERROR: token_mask_1d len={token_mask_1d.shape[0]} "
+                    f"but n_tokens={n_tokens}"
+                )
+                return mu, sd, token_mask_1d
 
     meta = np.load(os.path.join(data_out, "tfr_meta.npz"))
     n_tokens_erp = int(meta["n_tokens_erp"])
@@ -158,7 +161,12 @@ def _find_model_path(model_dir: str) -> str:
         p = os.path.join(model_dir, name)
         if os.path.exists(p):
             return p
-    for p in sorted([os.path.join(model_dir, x) for x in os.listdir(model_dir) if x.endswith(".keras")]):
+    keras_files = [
+        os.path.join(model_dir, x)
+        for x in os.listdir(model_dir)
+        if x.endswith(".keras")
+    ]
+for p in sorted(keras_files):
         return p
     raise SystemExit(f"ERROR: could not find keras model in {model_dir}")
 
