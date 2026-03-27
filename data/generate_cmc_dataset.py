@@ -63,18 +63,17 @@ def main() -> None:
     param_path = os.path.join(args.out_dir, "params.npy")
 
     if (os.path.exists(feat_path) or os.path.exists(param_path)) and not args.overwrite:
-        raise SystemExit(
-    "ERROR: data_out/features.npy or params.npy exists. "
-    "Use --overwrite to regenerate."
-    )
-    X = np.lib.format.open_memmap(
-    feat_path,
-    mode="w+",
-    dtype=np.float32,
-    shape=(args.n_samples, n_tokens, feature_dim),
-    )
+        raise SystemExit("ERROR: data_out/features.npy or params.npy exists. Use --overwrite to regenerate.")
 
-    Y = np.lib.format.open_memmap(param_path, mode="w+", dtype=np.float32, shape=(args.n_samples, P))
+    X = np.lib.format.open_memmap(feat_path, 
+                                  mode="w+", 
+                                  dtype=np.float32, 
+                                  shape=(args.n_samples, n_tokens, feature_dim))
+    Y = np.lib.format.open_memmap(
+        param_path, 
+        mode="w+", 
+        dtype=np.float32, 
+        shape=(args.n_samples, P))
 
     # Save metadata (priors reportable)
     np.savez(
