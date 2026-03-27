@@ -58,9 +58,9 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from scipy.stats import pearsonr
 
-
+# -----------------------------------------------------------------------------
 # Repo-relative imports
-
+# -----------------------------------------------------------------------------
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if BASE_DIR not in sys.path:
@@ -72,9 +72,9 @@ from models.param_transforms import theta_to_z, z_to_theta
 from models.posterior_fullcov import mvn_tril_nll, raw_tril_size
 
 
-
+# -----------------------------------------------------------------------------
 # Helpers
-
+# -----------------------------------------------------------------------------
 
 
 def _decode_str_array(arr: np.ndarray) -> List[str]:
@@ -155,6 +155,28 @@ def _logmeanexp(logp: np.ndarray, axis: int = 0) -> np.ndarray:
     m = np.max(logp, axis=axis, keepdims=True)
     return (m + np.log(np.mean(np.exp(logp - m), axis=axis, keepdims=True))).squeeze(axis)
 
+def _tri_indices(p: int, ordering: str = "row") -> Tuple[np.ndarray, np.ndarray]:
+    """Return lower-triangular (row, col) indices for a p x p matrix.
+
+    ordering:
+        - "row": row-major, left-to-right within each row, top-to-bottom
+        - "col": column-major, top-to-bottom within each column, left-to-right
+        - "tfp": bottom row first, left-to-right within each row
+    """
+    rr, cc = np.tril_indices(p, k=0)
+
+    if ordering == "row":
+        pass
+    elif ordering == "col":
+        idx = np.lexsort((rr, cc))  # primary: cc, secondary: rr
+        rr, cc = rr[idx], cc[idx]
+    elif ordering == "tfp":
+        idx = np.lexsort((cc, -rr))  # primary: -rr, secondary: cc
+        rr, cc = rr[idx], cc[idx]
+    else:
+        raise ValueError(f"Unknown ordering: {ordering}")
+
+    return rr.astype(np.int32), cc.astype(np.int32)
 
 @dataclass
 class PackedTril:
@@ -162,7 +184,7 @@ class PackedTril:
     diag_eps: float = 1e-3
 
     def __post_init__(self) -> None:
-        tri = np.tril_indices(self.P)
+        tri = _tri_indices(self.P, "row")
         self._tri = tri
 
         diag_idx = []
@@ -361,9 +383,9 @@ def _load_split_indices(model_dir: str, data_out: str, N: int) -> Tuple[np.ndarr
         )
 
 
-# -----------------------------------------------------------------------------
+
 # Main
-# -----------------------------------------------------------------------------
+
 
 
 def _extract_rank2_const_from_lambda_fn(fn):
@@ -690,7 +712,7 @@ def main() -> None:
 
     
     # Load data + meta
-   
+    
 
     X_path = _feature_path(args.data_out, args.features)
     if not os.path.isfile(X_path):
@@ -756,7 +778,7 @@ def main() -> None:
 
  
     # Load models + predict
-  
+
 
     custom = _get_custom_objects()
 
@@ -807,7 +829,8 @@ def main() -> None:
 
   
     # Mixture posterior sampling
-   
+  
+
 
     pack = PackedTril(P=P, diag_eps=1e-3)
 
@@ -831,9 +854,9 @@ def main() -> None:
     theta_samps = z_to_theta(z_samps, prior_low, prior_high)
     theta_mean = np.mean(theta_samps, axis=1)
 
-    
+    # ------------------------
     # Mixture NLL in z-space
-    
+    # ------------------------
 
     # nll_k(z_true) using training-consistent mvn_tril_nll
     z_true_tf = tf.convert_to_tensor(z_true, dtype=tf.float32)
@@ -849,7 +872,7 @@ def main() -> None:
     logp_mix = _logmeanexp(logp, axis=0)
     nll_z = (-logp_mix).astype(np.float32)
 
-    
+   
     # Metrics
     
 
@@ -872,9 +895,9 @@ def main() -> None:
     metrics.to_csv(metrics_path, index=False)
     print("Wrote", metrics_path)
 
-    
-    # NLL histogram
   
+    # NLL histogram
+
 
     plt.figure(figsize=(7.0, 4.0))
     plt.hist(nll_z, bins=40)
@@ -889,7 +912,7 @@ def main() -> None:
 
    
     # Save outputs (.npz)
-    
+
 
     out_npz = os.path.join(args.out_dir, f"eval_{args.split}_outputs.npz")
 
